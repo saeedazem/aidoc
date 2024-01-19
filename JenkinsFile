@@ -1,0 +1,46 @@
+pipeline {
+  agent any
+  stages {
+    stage("Cleaning Workspace") {
+        steps{
+            cleanWs()
+        }
+    }
+    stage('Checkout') {
+      steps {
+        script{
+                // trigger pipline from webhook in remote repository
+                checkout([$class: 'GitSCM',
+            	    branches: [[name: '*/master']],
+            	    doGenerateSubmoduleConfigurations: false,
+            	    extensions: [],
+            	    submoduleCfg: [],
+            	    userRemoteConfigs: [[
+            	        credentialsId: 'github',
+            	        url: 'git@github.com:saeedazem/aidoc.git'
+                ]]])
+        }
+        git 'https://github.com/saeedazem/aidoc.git'
+      }
+    }
+    stage('Push to Consul') {
+      steps {
+        withCredentials([string(credentialsId: 'consul-acl-token', variable: 'CONSUL_TOKEN')]) {
+        //token=5846b2f4-5800-843d-b626-7c6127121d99
+          sh "curl --request PUT --data-binary @config.json --header  'X-Consul-Token: ${CONSUL_TOKEN}' https://consul-cluster.consul.8139f6e0-0534-4e9e-a2ea-cdb33bfe6c24.aws.hashicorp.cloud/v1/kv/config.json"        
+        }
+      }
+    }
+    stage('Sanity Test') {
+      steps {
+        withCredentials([string(credentialsId: 'consul-acl-token', variable: 'CONSUL_TOKEN')]) {
+          script {
+            sh """ curl --header 'X-Consul-Token: ${CONSUL_TOKEN} https://consul-cluster.consul.8139f6e0-0534-4e9e-a2ea-cdb33bfe6c24.aws.hashicorp.cloud/v1/kv/config.json  > response.json """
+            sh """ cat response.json | jq -r '.[0].Value' | base64 --decode > out.json """
+            assert readFile('config.json').trim() == readFile('out.json').trim()
+          }
+        }
+      }
+    }
+  }
+}
